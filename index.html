@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XP 3D Pipes - WebGL Remake</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            z-index: 10;
+            transition: opacity 0.3s ease;
+        }
+
+        .settings-card {
+            background-color: rgba(20, 20, 20, 0.85);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #eee;
+            border-radius: 8px;
+        }
+
+        .card-header-title {
+            color: #fff;
+        }
+
+        .label {
+            color: #ccc;
+            font-size: 0.85rem;
+        }
+
+        input[type=range] {
+            width: 100%;
+            cursor: pointer;
+        }
+
+        .select select {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .select select:hover {
+            border-color: #fff;
+        }
+
+        .select::after {
+            border-color: #fff;
+        }
+
+        /* Hide UI when idle logic could go here, but keeping it simple */
+        
+        /* Custom scrollbar for panel if needed */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <div class="card settings-card">
+            <header class="card-header">
+                <p class="card-header-title">
+                    3D Pipes Settings
+                </p>
+                <button class="card-header-icon" aria-label="toggle" id="toggle-ui">
+                    <span class="icon">
+                        <i class="fas fa-angle-down" aria-hidden="true"></i>
+                    </span>
+                </button>
+            </header>
+            <div class="card-content">
+                <div class="content">
+                    
+                    <!-- Sliders -->
+                    <div class="field">
+                        <label class="label">Pipe Density (Max Pipes)</label>
+                        <div class="control">
+                            <input id="density-slider" type="range" min="1" max="50" value="8" step="1">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label class="label">Pipe Radius</label>
+                        <div class="control">
+                            <input id="radius-slider" type="range" min="0.5" max="5.0" value="1.5" step="0.1">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label class="label">Growth Speed</label>
+                        <div class="control">
+                            <input id="speed-slider" type="range" min="1" max="10" value="3" step="1">
+                        </div>
+                    </div>
+
+                    <!-- Colors -->
+                    <div class="field">
+                        <label class="label">Color Theme</label>
+                        <div class="control">
+                            <div class="select is-fullwidth is-small">
+                                <select id="color-select">
+                                    <option value="classic">Classic Gold</option>
+                                    <option value="neon">Neon Vaporwave</option>
+                                    <option value="emerald">Emerald City</option>
+                                    <option value="industrial">Industrial Silver</option>
+                                    <option value="dynamic">Cycling Colors (Dynamic)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr style="background-color: rgba(255,255,255,0.1); margin: 1rem 0;">
+
+                    <!-- Actions -->
+                    <div class="buttons is-centered">
+                        <button id="reset-btn" class="button is-info is-small is-outlined">Reset Pipes</button>
+                        <button id="save-btn" class="button is-success is-small is-outlined">Save Frame</button>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Configuration & State ---
+        const config = {
+            maxPipes: 8,
+            pipeRadius: 1.5,
+            speed: 3, // ticks per frame or speed multiplier
+            bounds: 40, // Grid size box (+/- this value)
+            gridStep: 4, // Distance between grid points (must be > radius * 2)
+            theme: 'classic'
+        };
+
+        const themes = {
+            classic: { color: 0xFFD700, specular: 0xffffff, shininess: 100, emissive: 0x332200 },
+            neon: { palette: [0xff00ff, 0x00ffff, 0xffff00, 0x9D00FF], specular: 0xffffff, shininess: 200, emissive: 0x222222 },
+            emerald: { color: 0x00ff44, specular: 0xccffcc, shininess: 60, emissive: 0x002200 },
+            industrial: { color: 0xaaaaaa, specular: 0xdddddd, shininess: 30, emissive: 0x111111 }
+        };
+
+        let scene, camera, renderer;
+        let pipes = [];
+        let grid = new Set(); // Stores "x,y,z" strings to mark occupied spaces
+        let frameId;
+        let leadLight; // Point light following the lead pipe
+
+        // --- Initialization ---
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            scene.fog = new THREE.Fog(0x000000, 20, 150);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+            camera.position.set(0, 0, 70);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); // preserveDrawingBuffer for screenshot
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x222222);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            dirLight.position.set(50, 50, 100);
+            scene.add(dirLight);
+
+            // Dynamic Point Light (follows pipes)
+            leadLight = new THREE.PointLight(0xffaa00, 2, 50);
+            scene.add(leadLight);
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            setupUI();
+
+            // Start Loop
+            animate();
+        }
+
+        // --- Pipe Logic ---
+        class Pipe {
+            constructor(id) {
+                this.id = id;
+                this.reset();
+            }
+
+            reset() {
+                this.alive = true;
+                this.segments = 0;
+                
+                // Random start position snapped to grid
+                const range = Math.floor(config.bounds / config.gridStep);
+                this.x = Math.floor((Math.random() * range * 2) - range) * config.gridStep;
+                this.y = Math.floor((Math.random() * range * 2) - range) * config.gridStep;
+                this.z = Math.floor((Math.random() * range * 2) - range) * config.gridStep; // Start slightly back?
+
+                // Random direction (vector)
+                this.dir = this.getRandomDirection();
+                
+                // Color setup
+                this.material = this.createMaterial();
+                
+                // Initial joint
+                this.addJoint(this.x, this.y, this.z);
+                
+                // Mark start pos
+                markGrid(this.x, this.y, this.z);
+            }
+
+            getRandomDirection() {
+                const dirs = [
+                    new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+                    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+                    new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+                ];
+                return dirs[Math.floor(Math.random() * dirs.length)];
+            }
+
+            createMaterial() {
+                // Determine color based on theme
+                let color = 0xffffff;
+                let props = {};
+
+                if (config.theme === 'dynamic') {
+                    // Start at a random hue
+                    const hue = Math.random();
+                    color = new THREE.Color().setHSL(hue, 1.0, 0.5);
+                    this.hue = hue; // Store for cycling
+                    props = { specular: 0xffffff, shininess: 100, emissive: 0x111111 };
+                } else if (config.theme === 'neon') {
+                    const palette = themes.neon.palette;
+                    color = palette[Math.floor(Math.random() * palette.length)];
+                    props = themes.neon;
+                } else {
+                    const theme = themes[config.theme] || themes.classic;
+                    color = theme.color;
+                    props = theme;
+                }
+
+                return new THREE.MeshPhongMaterial({
+                    color: color,
+                    specular: props.specular,
+                    shininess: props.shininess,
+                    emissive: props.emissive,
+                    flatShading: false
+                });
+            }
+
+            update() {
+                if (!this.alive) return;
+
+                // Move forward by gridStep
+                const nextX = this.x + this.dir.x * config.gridStep;
+                const nextY = this.y + this.dir.y * config.gridStep;
+                const nextZ = this.z + this.dir.z * config.gridStep;
+
+                // 1. Check Bounds
+                if (Math.abs(nextX) > config.bounds || Math.abs(nextY) > config.bounds || Math.abs(nextZ) > config.bounds) {
+                    this.die();
+                    return;
+                }
+
+                // 2. Check Collision (Self or Others)
+                if (checkGrid(nextX, nextY, nextZ)) {
+                    this.die(); // Hit something
+                    return;
+                }
+
+                // 3. Create Cylinder (Pipe Segment)
+                this.addCylinder(this.x, this.y, this.z, nextX, nextY, nextZ);
+
+                // 4. Update Position
+                this.x = nextX;
+                this.y = nextY;
+                this.z = nextZ;
+                markGrid(this.x, this.y, this.z);
+                this.segments++;
+
+                // 5. Chance to Turn
+                // Don't turn immediately after starting to give it some length
+                if (Math.random() < 0.3) {
+                    this.turn();
+                }
+                
+                // Update dynamic color
+                if (config.theme === 'dynamic') {
+                    this.hue += 0.01;
+                    this.material.color.setHSL(this.hue % 1, 1.0, 0.5);
+                }
+
+                // Update light position if this is the "lead" pipe (arbitrarily pipe 0 or the last active one)
+                if (this.id === 0) {
+                     leadLight.position.set(this.x, this.y, this.z + 10);
+                     leadLight.color.copy(this.material.color);
+                }
+            }
+
+            turn() {
+                // Valid turns are perpendicular to current direction
+                // We can pick a random axis that isn't the current one
+                const candidates = [];
+                const axes = [
+                    new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+                    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+                    new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+                ];
+
+                for (let axis of axes) {
+                    // Dot product 0 means perpendicular. Also check we aren't reversing (which is covered by perpendicular check naturally for grid axes)
+                    if (Math.abs(axis.dot(this.dir)) < 0.01) {
+                        candidates.push(axis);
+                    }
+                }
+
+                if (candidates.length > 0) {
+                    this.dir = candidates[Math.floor(Math.random() * candidates.length)];
+                    this.addJoint(this.x, this.y, this.z);
+                }
+            }
+
+            addCylinder(x1, y1, z1, x2, y2, z2) {
+                const height = config.gridStep;
+                const geometry = new THREE.CylinderGeometry(config.pipeRadius, config.pipeRadius, height, 16);
+                
+                // Orient cylinder
+                // Cylinder default is Y-up.
+                // We calculate midpoint and rotate.
+                const midX = (x1 + x2) / 2;
+                const midY = (y1 + y2) / 2;
+                const midZ = (z1 + z2) / 2;
+                
+                const mesh = new THREE.Mesh(geometry, this.material);
+                mesh.position.set(midX, midY, midZ);
+                
+                // Rotate to match direction
+                // Current dir
+                const direction = new THREE.Vector3(x2-x1, y2-y1, z2-z1).normalize();
+                
+                // Default cylinder axis is (0, 1, 0)
+                const axis = new THREE.Vector3(0, 1, 0);
+                const quaternion = new THREE.Quaternion().setFromUnitVectors(axis, direction);
+                mesh.setRotationFromQuaternion(quaternion);
+                
+                scene.add(mesh);
+            }
+
+            addJoint(x, y, z) {
+                const geometry = new THREE.SphereGeometry(config.pipeRadius * 1.2, 16, 16);
+                const mesh = new THREE.Mesh(geometry, this.material);
+                mesh.position.set(x, y, z);
+                scene.add(mesh);
+            }
+
+            die() {
+                this.alive = false;
+                // Auto respawn after delay handled by manager, or just mark as dead
+                // For this screensaver, we want continuous flow.
+                // We can respawn this pipe object immediately in a new spot.
+                setTimeout(() => {
+                    this.reset();
+                }, 500);
+            }
+        }
+
+        // --- Grid Logic ---
+        function markGrid(x, y, z) {
+            grid.add(`${x},${y},${z}`);
+        }
+
+        function checkGrid(x, y, z) {
+            return grid.has(`${x},${y},${z}`);
+        }
+
+        function clearGrid() {
+            grid.clear();
+        }
+
+        // --- Main Animation Loop ---
+        let lastTime = 0;
+        let tickAccumulator = 0;
+
+        function animate(time) {
+            frameId = requestAnimationFrame(animate);
+
+            // Rotate camera slowly for dynamic feel
+            const radius = 90;
+            const theta = time * 0.0001;
+            camera.position.x = radius * Math.sin(theta);
+            camera.position.z = radius * Math.cos(theta);
+            camera.lookAt(0, 0, 0);
+
+            // Pipe Growth Logic (throttled by speed)
+            // Speed 1 = slow, Speed 10 = fast
+            // Base update interval
+            const now = performance.now();
+            const delta = now - lastTime;
+            lastTime = now;
+
+            // Simple tick system: update logic every X ms based on speed slider
+            // Higher slider = lower interval
+            const interval = 1000 / (config.speed * 2 + 1); 
+
+            tickAccumulator += delta;
+            if (tickAccumulator > interval) {
+                tickAccumulator = 0;
+                
+                // Manage Pipe Count
+                managePipes();
+
+                // Update active pipes
+                pipes.forEach(pipe => pipe.update());
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function managePipes() {
+            // If we have fewer pipes than config.maxPipes, create more
+            if (pipes.length < config.maxPipes) {
+                const newPipe = new Pipe(pipes.length);
+                pipes.push(newPipe);
+            } 
+            // If we have more (e.g. slider moved down), remove them (simulate dying)
+            else if (pipes.length > config.maxPipes) {
+                const pipeToRemove = pipes.pop();
+                pipeToRemove.alive = false; 
+            }
+        }
+
+        function resetSimulation() {
+            // Remove all meshes from scene
+            // Iterate backwards to avoid index issues
+            for( let i = scene.children.length - 1; i >= 0; i--) { 
+                let obj = scene.children[i];
+                // Keep lights and camera?
+                if (obj.isMesh) {
+                    scene.remove(obj);
+                    // Dispose geometries/materials to free memory
+                    if (obj.geometry) obj.geometry.dispose();
+                    // if (obj.material) obj.material.dispose(); // Materials might be shared
+                }
+            }
+            
+            clearGrid();
+            pipes = [];
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- UI Setup ---
+        function setupUI() {
+            // Sliders
+            const densitySlider = document.getElementById('density-slider');
+            densitySlider.addEventListener('input', (e) => {
+                config.maxPipes = parseInt(e.target.value);
+            });
+
+            const radiusSlider = document.getElementById('radius-slider');
+            radiusSlider.addEventListener('input', (e) => {
+                config.pipeRadius = parseFloat(e.target.value);
+                // Requires reset to look right? Or just apply to new pipes.
+                // Let's force reset for clarity
+                resetSimulation();
+            });
+
+            const speedSlider = document.getElementById('speed-slider');
+            speedSlider.addEventListener('input', (e) => {
+                config.speed = parseInt(e.target.value);
+            });
+
+            // Color Theme
+            const colorSelect = document.getElementById('color-select');
+            colorSelect.addEventListener('change', (e) => {
+                config.theme = e.target.value;
+                resetSimulation();
+            });
+
+            // Buttons
+            document.getElementById('reset-btn').addEventListener('click', resetSimulation);
+            
+            document.getElementById('save-btn').addEventListener('click', () => {
+                // Render one frame explicitly to ensure buffer is ready (optional but safe)
+                renderer.render(scene, camera);
+                const dataURL = renderer.domElement.toDataURL('image/png');
+                const link = document.createElement('a');
+                link.download = '3d-pipes-frame.png';
+                link.href = dataURL;
+                link.click();
+            });
+
+            // Toggle UI
+            const toggleBtn = document.getElementById('toggle-ui');
+            const cardContent = document.querySelector('.card-content');
+            const icon = toggleBtn.querySelector('i');
+            
+            toggleBtn.addEventListener('click', () => {
+                if (cardContent.style.display === 'none') {
+                    cardContent.style.display = 'block';
+                    icon.classList.remove('fa-angle-up');
+                    icon.classList.add('fa-angle-down');
+                } else {
+                    cardContent.style.display = 'none';
+                    icon.classList.remove('fa-angle-down');
+                    icon.classList.add('fa-angle-up');
+                }
+            });
+        }
+
+        // Start
+        init();
+
+    </script>
+</body>
+</html>
