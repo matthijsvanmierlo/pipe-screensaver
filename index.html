@@ -129,6 +129,13 @@
                         </div>
                     </div>
 
+                    <div class="field">
+                        <label class="label">Light Level</label>
+                        <div class="control">
+                            <input id="light-slider" type="range" min="0" max="3" value="1" step="0.1">
+                        </div>
+                    </div>
+
                     <!-- Colors -->
                     <div class="field">
                         <label class="label">Color Theme</label>
@@ -175,9 +182,12 @@
             maxPipes: 8,
             pipeRadius: 1.5,
             speed: 3, // ticks per frame or speed multiplier
-            bounds: 40, // Grid size box (+/- this value)
+            boundsX: 40,
+            boundsY: 40,
+            boundsZ: 40,
             gridStep: 4, // Distance between grid points (must be > radius * 2)
-            theme: 'classic'
+            theme: 'classic',
+            lightIntensity: 1
         };
 
         const themes = {
@@ -187,7 +197,7 @@
             industrial: { color: 0xaaaaaa, specular: 0xdddddd, shininess: 30, emissive: 0x111111 }
         };
 
-        let scene, camera, renderer;
+        let scene, camera, renderer, ambientLight;
         let pipes = [];
         let grid = new Set(); // Stores "x,y,z" strings to mark occupied spaces
         let frameId;
@@ -213,7 +223,7 @@
             container.appendChild(renderer.domElement);
 
             // Lighting
-            const ambientLight = new THREE.AmbientLight(0x222222);
+            ambientLight = new THREE.AmbientLight(0x222222);
             scene.add(ambientLight);
 
             const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
@@ -227,6 +237,9 @@
             // Event Listeners
             window.addEventListener('resize', onWindowResize);
             setupUI();
+
+            // Calculate initial bounds
+            updateBounds();
 
             // Start Loop
             animate();
@@ -244,10 +257,13 @@
                 this.segments = 0;
                 
                 // Random start position snapped to grid
-                const range = Math.floor(config.bounds / config.gridStep);
-                this.x = Math.floor((Math.random() * range * 2) - range) * config.gridStep;
-                this.y = Math.floor((Math.random() * range * 2) - range) * config.gridStep;
-                this.z = Math.floor((Math.random() * range * 2) - range) * config.gridStep; // Start slightly back?
+                const rangeX = Math.floor(config.boundsX / config.gridStep);
+                const rangeY = Math.floor(config.boundsY / config.gridStep);
+                const rangeZ = Math.floor(config.boundsZ / config.gridStep);
+
+                this.x = Math.floor((Math.random() * rangeX * 2) - rangeX) * config.gridStep;
+                this.y = Math.floor((Math.random() * rangeY * 2) - rangeY) * config.gridStep;
+                this.z = Math.floor((Math.random() * rangeZ * 2) - rangeZ) * config.gridStep; // Start slightly back?
 
                 // Random direction (vector)
                 this.dir = this.getRandomDirection();
@@ -310,7 +326,7 @@
                 const nextZ = this.z + this.dir.z * config.gridStep;
 
                 // 1. Check Bounds
-                if (Math.abs(nextX) > config.bounds || Math.abs(nextY) > config.bounds || Math.abs(nextZ) > config.bounds) {
+                if (Math.abs(nextX) > config.boundsX || Math.abs(nextY) > config.boundsY || Math.abs(nextZ) > config.boundsZ) {
                     this.die();
                     return;
                 }
@@ -500,10 +516,28 @@
             pipes = [];
         }
 
+        function updateBounds() {
+            // Calculate visible height at z=0
+            // Camera position is at z=70 (radius=70 used in init, but actually rotation radius is 90 in animate...)
+            // Wait, init says: camera.position.set(0, 0, 70);
+            // Animate says: radius = 90; camera.position.z = radius * Math.cos(theta);
+            // Let's assume average distance or max distance.
+            // Let's use 70 as the reference distance for bounds to ensure pipes fill the screen
+            const distance = 70;
+            const vFOV = THREE.MathUtils.degToRad(camera.fov); // 60 degrees
+            const height = 2 * Math.tan(vFOV / 2) * distance;
+            const width = height * camera.aspect;
+
+            config.boundsX = width / 2;
+            config.boundsY = height / 2;
+            config.boundsZ = 50; // Keep depth deep
+        }
+
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            updateBounds();
         }
 
         // --- UI Setup ---
@@ -525,6 +559,14 @@
             const speedSlider = document.getElementById('speed-slider');
             speedSlider.addEventListener('input', (e) => {
                 config.speed = parseInt(e.target.value);
+            });
+
+            const lightSlider = document.getElementById('light-slider');
+            lightSlider.addEventListener('input', (e) => {
+                config.lightIntensity = parseFloat(e.target.value);
+                if (ambientLight) {
+                    ambientLight.intensity = config.lightIntensity;
+                }
             });
 
             // Color Theme
